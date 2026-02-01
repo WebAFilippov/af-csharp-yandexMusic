@@ -46,6 +46,27 @@ const { spawn } = require('child_process');
 const service = spawn('YandexMusicController.exe');
 ```
 
+### Configuration
+
+You can customize the application behavior by creating a `config.json` file in the same directory as the executable.
+
+**Example config.json:**
+```json
+{
+  "thumbnail": {
+    "size": 150,
+    "quality": 85
+  }
+}
+```
+
+**Configuration Options:**
+
+- `thumbnail.size` - Size of the thumbnail in pixels (default: 150). The thumbnail will be resized to a square of this size.
+- `thumbnail.quality` - JPEG quality for thumbnail compression 1-100 (default: 85). Higher values mean better quality but larger file size.
+
+If `config.json` is not present or contains errors, the application will use default values.
+
 ## API Documentation
 
 ### Communication Protocol

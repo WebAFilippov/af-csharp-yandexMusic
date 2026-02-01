@@ -8,6 +8,12 @@ public class ThumbnailService
 {
     private readonly Dictionary<ThumbnailCacheKey, string> _cache = new();
     private readonly object _cacheLock = new object();
+    private readonly ThumbnailConfig _config;
+
+    public ThumbnailService(ThumbnailConfig config)
+    {
+        _config = config;
+    }
 
     public async Task<string?> GetThumbnailBase64Async(IRandomAccessStreamReference? thumbnailReference, string artist, string album)
     {
@@ -34,9 +40,9 @@ public class ThumbnailService
             if (originalBitmap == null)
                 return null;
 
-            using var resizedBitmap = ResizeAndCropToSquare(originalBitmap, 150);
+            using var resizedBitmap = ResizeAndCropToSquare(originalBitmap, _config.Size);
             using var image = SKImage.FromBitmap(resizedBitmap);
-            using var data = image.Encode(SKEncodedImageFormat.Jpeg, 85);
+            using var data = image.Encode(SKEncodedImageFormat.Jpeg, _config.Quality);
 
             if (data == null)
                 return null;
