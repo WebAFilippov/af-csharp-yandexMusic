@@ -1,0 +1,3 @@
+C:\Users\webdev\Desktop\c#v2\MediaControllerService\bin\Release\net8.0-windows10.0.17763.0\win-x64\publish\MediaControllerService.pdb
+C:\Users\webdev\Desktop\c#v2\MediaControllerService\bin\Release\net8.0-windows10.0.17763.0\win-x64\publish\libSkiaSharp.dll
+C:\Users\webdev\Desktop\c#v2\MediaControllerService\bin\Release\net8.0-windows10.0.17763.0\win-x64\publish\MediaControllerService.exe
