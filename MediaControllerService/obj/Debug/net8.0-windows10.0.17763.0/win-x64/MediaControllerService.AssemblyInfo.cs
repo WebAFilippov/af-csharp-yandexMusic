@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("MediaControllerService")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6f4f5fa9977660a271c41682c4bc90c570af9b7d")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+a219445fcf1b5c0af59e01b99dc893396da0c7d1")]
 [assembly: System.Reflection.AssemblyProductAttribute("MediaControllerService")]
 [assembly: System.Reflection.AssemblyTitleAttribute("MediaControllerService")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

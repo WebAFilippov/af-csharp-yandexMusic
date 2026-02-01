@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MediaControllerService.Services;
 
 namespace MediaControllerService;
@@ -11,36 +10,82 @@ class Program
     private static AudioService? _audioService;
     private static readonly ManualResetEventSlim _shutdownEvent = new(false);
 
-    private static AppConfig LoadConfig()
+    private static AppConfig ParseArguments(string[] args)
     {
-        try
+        var config = new AppConfig();
+        
+        for (int i = 0; i < args.Length; i++)
         {
-            if (File.Exists("config.json"))
+            var arg = args[i].ToLowerInvariant();
+            
+            // Parse --thumbnail-size=150 or --thumbnail-size 150
+            if (arg.StartsWith("--thumbnail-size="))
             {
-                var json = File.ReadAllText("config.json");
-                var config = JsonSerializer.Deserialize<AppConfig>(json);
-                if (config != null)
+                var value = arg.Substring("--thumbnail-size=".Length);
+                if (int.TryParse(value, out int size) && size > 0 && size <= 1000)
                 {
-                    Console.WriteLine($"[Config] Loaded from config.json: Thumbnail Size={config.Thumbnail.Size}, Quality={config.Thumbnail.Quality}");
-                    return config;
+                    config.Thumbnail.Size = size;
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[Config] Error loading config.json: {ex.Message}");
+            else if (arg == "--thumbnail-size" && i + 1 < args.Length)
+            {
+                if (int.TryParse(args[i + 1], out int size) && size > 0 && size <= 1000)
+                {
+                    config.Thumbnail.Size = size;
+                    i++; // Skip next argument
+                }
+            }
+            // Parse --thumbnail-quality=85 or --thumbnail-quality 85
+            else if (arg.StartsWith("--thumbnail-quality="))
+            {
+                var value = arg.Substring("--thumbnail-quality=".Length);
+                if (int.TryParse(value, out int quality) && quality >= 1 && quality <= 100)
+                {
+                    config.Thumbnail.Quality = quality;
+                }
+            }
+            else if (arg == "--thumbnail-quality" && i + 1 < args.Length)
+            {
+                if (int.TryParse(args[i + 1], out int quality) && quality >= 1 && quality <= 100)
+                {
+                    config.Thumbnail.Quality = quality;
+                    i++; // Skip next argument
+                }
+            }
+            else if (arg == "--help" || arg == "-h")
+            {
+                PrintHelp();
+                Environment.Exit(0);
+            }
         }
         
-        Console.WriteLine("[Config] Using default configuration");
-        return new AppConfig();
+        Console.WriteLine($"[Config] Thumbnail Size={config.Thumbnail.Size}, Quality={config.Thumbnail.Quality}");
+        return config;
+    }
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine("YandexMusicController - Windows Media Controller for Yandex Music");
+        Console.WriteLine();
+        Console.WriteLine("Usage: YandexMusicController.exe [options]");
+        Console.WriteLine();
+        Console.WriteLine("Options:");
+        Console.WriteLine("  --thumbnail-size <pixels>     Thumbnail size in pixels (default: 150)");
+        Console.WriteLine("  --thumbnail-quality <1-100>   JPEG quality (default: 85)");
+        Console.WriteLine("  --help, -h                    Show this help message");
+        Console.WriteLine();
+        Console.WriteLine("Examples:");
+        Console.WriteLine("  YandexMusicController.exe");
+        Console.WriteLine("  YandexMusicController.exe --thumbnail-size 200 --thumbnail-quality 90");
+        Console.WriteLine("  YandexMusicController.exe --thumbnail-size=200 --thumbnail-quality=90");
     }
 
     static async Task Main(string[] args)
     {
         Console.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] MediaControllerService starting...");
         
-        // Load configuration
-        var config = LoadConfig();
+        // Parse command-line arguments
+        var config = ParseArguments(args);
         
         try
         {

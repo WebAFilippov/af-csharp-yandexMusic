@@ -56,7 +56,7 @@ function handleMessage(msg) {
 }
 
 function updateDisplay(session) {
-  console.clear();
+  // console.clear();
   console.log('🎵 Яндекс Музыка Controller\n');
   
   if (!session) {
@@ -79,6 +79,7 @@ function updateDisplay(session) {
     if (session.thumbnailBase64) {
       const sizeKB = Math.round(session.thumbnailBase64.length * 0.75 / 1024);
       console.log(`   🖼️  Обложка: ${sizeKB}KB`);
+      console.log(`   🖼️  Обложка: ${session.thumbnailBase64}`);
     }
     // Add volume info
     if (session.volume !== undefined) {
