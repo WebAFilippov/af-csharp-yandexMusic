@@ -84,7 +84,7 @@ public class StdioCommunicationService : IDisposable
             }
 
             // For Yandex Music, we ignore sessionId and always control the active session
-            var success = await _mediaWatcher.SendCommandAsync(command.Command, command.StepPercent);
+            var success = await _mediaWatcher.SendCommandAsync(command.Command, command.StepPercent, command.Value);
 
             if (!success)
             {
