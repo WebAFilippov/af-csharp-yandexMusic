@@ -1,9 +1,0 @@
-{
-  "name": "mediacontroller-test",
-  "version": "1.0.0",
-  "description": "Test client for MediaControllerService (Yandex Music)",
-  "type": "module",
-  "scripts": {
-    "test": "node yandex-test.js"
-  }
-}

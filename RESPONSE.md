@@ -1,76 +1,60 @@
-Отлично! ✅ **Версия 2.0.0** готова и запушена!
+Отлично! ✅ Исправлена проблема с начальными данными!
 
-## Что сделано:
+## Что было не так:
 
-### Перенос логики на C#:
+При старте контроллера:
+- Отправлялась только громкость (volume)
+- Media данные (трек, playbackStatus) не отправлялись!
+- Событие `OnAnyMediaPropertyChanged` не вызывалось пока не изменятся метаданные
 
-**Раньше (Node.js):**
-- C# отправлял всё вместе в `type: "session"`
-- Node.js фильтровал и разделял события
-- Дублирование логики
+## Решение:
 
-**Теперь (C#):**
-- C# отправляет `type: "media"` только при изменении трека
-- C# отправляет `type: "volume"` только при изменении громкости
-- Node.js просто проксирует события
+Теперь `SendInitialDataAsync` при старте:
+1. Отправляет текущую громкость
+2. **Получает текущие media свойства** через `_yandexSession.ControlSession.TryGetMediaPropertiesAsync()`
+3. **Отправляет media данные** с текущим playbackStatus
 
-### Новый протокол:
+## Код изменений:
 
-```json
-// type: "media" - только данные трека
+```csharp
+// Отправка громкости (как раньше)
+var volumeData = new VolumeData { ... };
+OnVolumeChanged?.Invoke(this, volumeData);
+
+// НОВОЕ: Получаем и отправляем media данные
+if (_yandexSession?.ControlSession != null)
 {
-  "type": "media",
-  "data": {
-    "id": "...",
-    "title": "Song Name",
-    "artist": "Artist",
-    "album": "Album",
-    "playbackStatus": "Playing",
-    "thumbnailBase64": "...",
-    "isFocused": true
-  }
-}
-
-// type: "volume" - только громкость
-{
-  "type": "volume",
-  "data": {
-    "volume": 75,
-    "isMuted": false
-  }
+    var playbackInfo = _yandexSession.ControlSession.GetPlaybackInfo();
+    var mediaProperties = await _yandexSession.ControlSession.TryGetMediaPropertiesAsync();
+    
+    if (IsValidSessionData(mediaProperties.Title))
+    {
+        var mediaData = new MediaData {
+            Title = mediaProperties.Title,
+            Artist = mediaProperties.Artist,
+            PlaybackStatus = playbackInfo.PlaybackStatus.ToString(),
+            // ... остальные поля
+        };
+        OnMediaChanged?.Invoke(this, mediaData);
+    }
 }
 ```
 
-### Обновленный API Node.js:
+## Результат:
 
-```typescript
-import ymc from 'yandex-music-desktop-library';
+Теперь при запуске контроллера вы сразу получаете:
+- ✅ Текущий трек (media событие)
+- ✅ Текущий playbackStatus (Playing/Paused)
+- ✅ Текущую громкость (volume событие)
 
-const controller = new ymc();
+## Версия 2.0.2:
 
-// Теперь 'media' вместо 'track'
-controller.on('media', (data) => {
-  console.log(data.title, data.artist); // ✅ только трек
-});
+- **Коммит:** `91d8b54` / `0d0890c`
+- **Статус:** Собрано и запушено
+- **Действие:** Опубликуйте в npm:
+  ```bash
+  cd yandexMusic-desktop-library
+  npm publish --otp=XXXXXX
+  ```
 
-// 'volume' отдельно
-controller.on('volume', (data) => {
-  console.log(data.volume, data.isMuted); // ✅ только громкость
-});
-```
-
-## Коммиты:
-- `29 files changed` - основные изменения протокола
-- `version 2.0.0` - major bump (breaking change)
-
-**GitHub:** https://github.com/WebAFilippov/yandexMusic-desktop-library
-
-Для публикации:
-```bash
-cd yandexMusic-desktop-library
-npm publish
-```
-
-⚠️ **Breaking Change**: Событие `'track'` переименовано в `'media'`!
-
-🎵 Готово!
+Теперь слушатель работает сразу при старте! 🎵
