@@ -80,7 +80,7 @@ public class MediaWatcherService : IDisposable
     {
         try
         {
-            // Send current volume only - media data will be sent via OnAnyMediaPropertyChanged event
+            // Send current volume
             var (volume, isMuted) = _audioService.GetVolumeInfo();
             var volumeData = new VolumeData
             {
@@ -89,6 +89,65 @@ public class MediaWatcherService : IDisposable
             };
             _lastVolumeData = volumeData;
             OnVolumeChanged?.Invoke(this, volumeData);
+
+            // Try to get current media properties
+            if (_yandexSession?.ControlSession != null)
+            {
+                try
+                {
+                    var playbackInfo = _yandexSession.ControlSession.GetPlaybackInfo();
+                    var mediaProperties = await _yandexSession.ControlSession.TryGetMediaPropertiesAsync();
+                    
+                    if (IsValidSessionData(mediaProperties.Title))
+                    {
+                        // Store the properties
+                        lock (_sessionLock)
+                        {
+                            if (_sessionInfo != null)
+                            {
+                                _sessionInfo.LastMediaProperties = mediaProperties;
+                                _sessionInfo.LastPlaybackStatus = playbackInfo.PlaybackStatus;
+                            }
+                        }
+
+                        // Get thumbnail
+                        string? thumbnailBase64 = null;
+                        if (mediaProperties.Thumbnail != null)
+                        {
+                            thumbnailBase64 = await _thumbnailService.GetThumbnailBase64Async(
+                                mediaProperties.Thumbnail,
+                                mediaProperties.Artist ?? string.Empty,
+                                mediaProperties.AlbumTitle ?? string.Empty
+                            );
+                            if (thumbnailBase64 != null)
+                            {
+                                _thumbnailCache = thumbnailBase64;
+                            }
+                        }
+
+                        // Create and send media data
+                        var mediaData = new MediaData
+                        {
+                            Id = _sessionInfo?.Guid ?? Guid.NewGuid().ToString("N"),
+                            AppId = YANDEX_MUSIC_APP_IDS[0],
+                            AppName = "Яндекс Музыка",
+                            Title = mediaProperties.Title ?? string.Empty,
+                            Artist = mediaProperties.Artist ?? string.Empty,
+                            Album = mediaProperties.AlbumTitle ?? string.Empty,
+                            PlaybackStatus = playbackInfo.PlaybackStatus.ToString(),
+                            ThumbnailBase64 = thumbnailBase64,
+                            IsFocused = true
+                        };
+
+                        _lastMediaData = mediaData;
+                        OnMediaChanged?.Invoke(this, mediaData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[MediaWatcher] Error getting initial media properties: {ex.Message}");
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -157,7 +216,27 @@ public class MediaWatcherService : IDisposable
             }
         }
 
-        // Playback status changed - media data will be updated via OnAnyMediaPropertyChanged event
+        // Playback status changed - send media update with new status
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                GlobalSystemMediaTransportControlsSessionMediaProperties? props = null;
+                lock (_sessionLock)
+                {
+                    props = _sessionInfo?.LastMediaProperties;
+                }
+
+                if (props != null && IsValidSessionData(props.Title))
+                {
+                    ProcessMediaPropertyChangedAsync(props).Wait();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MediaWatcher] Error sending playback status change: {ex.Message}");
+            }
+        });
     }
 
     private void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
@@ -168,6 +247,12 @@ public class MediaWatcherService : IDisposable
         // Only process if we have a valid title
         if (!IsValidSessionData(args.Title))
             return;
+
+        // Store the properties for later use in playback state changes
+        if (_sessionInfo != null)
+        {
+            _sessionInfo.LastMediaProperties = args;
+        }
 
         _ = Task.Run(() => ProcessMediaPropertyChangedAsync(args));
     }
