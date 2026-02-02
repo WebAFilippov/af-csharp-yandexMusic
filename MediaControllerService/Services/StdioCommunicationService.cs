@@ -23,12 +23,11 @@ public class StdioCommunicationService : IDisposable
     {
         Console.WriteLine("[Stdio] Communication service started");
         
-        _mediaWatcher.OnSessionChanged += MediaWatcher_OnSessionChanged;
-        _mediaWatcher.OnSessionUpdated += MediaWatcher_OnSessionUpdated;
+        _mediaWatcher.OnMediaChanged += MediaWatcher_OnMediaChanged;
+        _mediaWatcher.OnVolumeChanged += MediaWatcher_OnVolumeChanged;
+        _mediaWatcher.OnSessionClosed += MediaWatcher_OnSessionClosed;
 
-        // Send initial session
-        var session = _mediaWatcher.GetCurrentSession();
-        SendSession(session);
+        // Initial media data will be sent via OnMediaChanged event when session is detected
 
         // Start reading from stdin
         _readTask = Task.Run(ReadStdinAsync);
@@ -99,26 +98,25 @@ public class StdioCommunicationService : IDisposable
         }
     }
 
-    private void MediaWatcher_OnSessionChanged(object? sender, MediaSessionDto? session)
+    private void MediaWatcher_OnMediaChanged(object? sender, MediaData? mediaData)
     {
-        SendSession(session);
+        SendMessage(new Message { Type = "media", Data = mediaData });
     }
 
-    private void MediaWatcher_OnSessionUpdated(object? sender, MediaSessionDto? session)
+    private void MediaWatcher_OnVolumeChanged(object? sender, VolumeData volumeData)
     {
-        SendSession(session);
+        SendMessage(new Message { Type = "volume", Data = volumeData });
     }
 
-    private void SendSession(MediaSessionDto? session)
+    private void MediaWatcher_OnSessionClosed(object? sender, EventArgs e)
+    {
+        SendMessage(new Message { Type = "media", Data = null });
+    }
+
+    private void SendMessage(Message message)
     {
         try
         {
-            var message = new Message
-            {
-                Type = "session",
-                Data = session
-            };
-            
             var json = JsonSerializer.Serialize(message);
             Console.WriteLine(json);
         }
@@ -130,7 +128,7 @@ public class StdioCommunicationService : IDisposable
 
     private Task SendErrorAsync()
     {
-        SendSession(null);
+        SendMessage(new Message { Type = "media", Data = null });
         return Task.CompletedTask;
     }
 

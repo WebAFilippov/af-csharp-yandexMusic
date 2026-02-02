@@ -15,24 +15,37 @@ public class MediaWatcherService : IDisposable
     private string? _thumbnailCache;
     private readonly object _sessionLock = new object();
     private readonly AudioService _audioService;
-    private (float Volume, bool IsMuted) _currentVolumeInfo;
+    
+    // Track previous values for change detection
+    private MediaData? _lastMediaData;
+    private VolumeData? _lastVolumeData;
 
-    public event EventHandler<MediaSessionDto?>? OnSessionChanged;
-    public event EventHandler<MediaSessionDto?>? OnSessionUpdated;
+    // New events - separated by type
+    public event EventHandler<MediaData?>? OnMediaChanged;
+    public event EventHandler<VolumeData>? OnVolumeChanged;
+    public event EventHandler? OnSessionClosed;
 
     public MediaWatcherService(ThumbnailService thumbnailService, AudioService audioService)
     {
         _thumbnailService = thumbnailService;
         _audioService = audioService;
 
+        // Listen to system volume changes from AudioService
         _audioService.OnVolumeChanged += (sender, info) =>
         {
-            _currentVolumeInfo = info;
-            // Trigger session update with new volume
-            var dto = CreateSessionDtoFromExistingData();
-            if (dto != null && IsValidSessionData(dto.Title))
+            var newVolumeData = new VolumeData
             {
-                OnSessionUpdated?.Invoke(this, dto);
+                Volume = (int)info.Volume,
+                IsMuted = info.IsMuted
+            };
+
+            // Check if volume actually changed
+            if (_lastVolumeData == null || 
+                _lastVolumeData.Volume != newVolumeData.Volume || 
+                _lastVolumeData.IsMuted != newVolumeData.IsMuted)
+            {
+                _lastVolumeData = newVolumeData;
+                OnVolumeChanged?.Invoke(this, newVolumeData);
             }
         };
     }
@@ -52,15 +65,35 @@ public class MediaWatcherService : IDisposable
         lock (_sessionLock)
         {
             var yandexSession = _mediaManager.CurrentMediaSessions.Values
-                .FirstOrDefault(s => s.Id == YANDEX_MUSIC_APP_IDS[0]);
+                .FirstOrDefault(s => YANDEX_MUSIC_APP_IDS.Contains(s.Id));
             
             if (yandexSession != null)
             {
                 RegisterYandexSession(yandexSession);
+                // Send initial data
+                _ = Task.Run(SendInitialDataAsync);
             }
         }
+    }
 
-        NotifySessionChanged();
+    private async Task SendInitialDataAsync()
+    {
+        try
+        {
+            // Send current volume only - media data will be sent via OnAnyMediaPropertyChanged event
+            var (volume, isMuted) = _audioService.GetVolumeInfo();
+            var volumeData = new VolumeData
+            {
+                Volume = (int)volume,
+                IsMuted = isMuted
+            };
+            _lastVolumeData = volumeData;
+            OnVolumeChanged?.Invoke(this, volumeData);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MediaWatcher] Error sending initial data: {ex.Message}");
+        }
     }
 
     private bool IsYandexMusic(MediaManager.MediaSession session)
@@ -92,7 +125,7 @@ public class MediaWatcherService : IDisposable
             RegisterYandexSession(session);
         }
 
-        NotifySessionChanged();
+        // Media data will be sent via OnAnyMediaPropertyChanged event when available
     }
 
     private void MediaManager_OnAnySessionClosed(MediaManager.MediaSession session)
@@ -105,9 +138,10 @@ public class MediaWatcherService : IDisposable
             _yandexSession = null;
             _sessionInfo = null;
             _thumbnailCache = null;
+            _lastMediaData = null;
         }
 
-        NotifySessionChanged();
+        OnSessionClosed?.Invoke(this, EventArgs.Empty);
     }
 
     private void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
@@ -123,11 +157,7 @@ public class MediaWatcherService : IDisposable
             }
         }
 
-        var dto = CreateSessionDtoFromExistingData();
-        if (dto != null && IsValidSessionData(dto.Title))
-        {
-            OnSessionUpdated?.Invoke(this, dto);
-        }
+        // Playback status changed - media data will be updated via OnAnyMediaPropertyChanged event
     }
 
     private void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
@@ -139,46 +169,63 @@ public class MediaWatcherService : IDisposable
         if (!IsValidSessionData(args.Title))
             return;
 
-        _ = Task.Run(async () =>
+        _ = Task.Run(() => ProcessMediaPropertyChangedAsync(args));
+    }
+
+    private async Task ProcessMediaPropertyChangedAsync(GlobalSystemMediaTransportControlsSessionMediaProperties props)
+    {
+        try
         {
-            try
+            string? thumbnailBase64 = _thumbnailCache;
+
+            // Only fetch new thumbnail if artist/album changed
+            var cacheKey = $"{props.Artist ?? ""}|{props.AlbumTitle ?? ""}";
+            if (thumbnailBase64 == null && props.Thumbnail != null)
             {
-                string? thumbnailBase64 = _thumbnailCache;
+                thumbnailBase64 = await _thumbnailService.GetThumbnailBase64Async(
+                    props.Thumbnail,
+                    props.Artist ?? string.Empty,
+                    props.AlbumTitle ?? string.Empty
+                );
 
-                if (thumbnailBase64 == null && args.Thumbnail != null)
+                if (thumbnailBase64 != null)
                 {
-                    thumbnailBase64 = await _thumbnailService.GetThumbnailBase64Async(
-                        args.Thumbnail,
-                        args.Artist ?? string.Empty,
-                        args.AlbumTitle ?? string.Empty
-                    );
-
-                    if (thumbnailBase64 != null)
-                    {
-                        _thumbnailCache = thumbnailBase64;
-                    }
-                }
-
-                lock (_sessionLock)
-                {
-                    if (_sessionInfo != null)
-                    {
-                        _sessionInfo.LastMediaProperties = args;
-                        _sessionInfo.LastThumbnailBase64 = thumbnailBase64;
-                    }
-                }
-
-                var dto = CreateSessionDto(args, thumbnailBase64);
-                if (dto != null && IsValidSessionData(dto.Title))
-                {
-                    OnSessionUpdated?.Invoke(this, dto);
+                    _thumbnailCache = thumbnailBase64;
                 }
             }
-            catch (Exception ex)
+
+            var playbackInfo = _yandexSession?.ControlSession?.GetPlaybackInfo();
+
+            // Create new media data
+            var newMediaData = new MediaData
             {
-                Console.WriteLine($"[MediaWatcher] Error processing media properties: {ex.Message}");
+                Id = _sessionInfo?.Guid ?? Guid.NewGuid().ToString("N"),
+                AppId = YANDEX_MUSIC_APP_IDS[0],
+                AppName = "Яндекс Музыка",
+                Title = props.Title ?? string.Empty,
+                Artist = props.Artist ?? string.Empty,
+                Album = props.AlbumTitle ?? string.Empty,
+                PlaybackStatus = playbackInfo?.PlaybackStatus.ToString() ?? "Unknown",
+                ThumbnailBase64 = thumbnailBase64,
+                IsFocused = true
+            };
+
+            // Check if media data actually changed
+            if (_lastMediaData == null ||
+                _lastMediaData.Title != newMediaData.Title ||
+                _lastMediaData.Artist != newMediaData.Artist ||
+                _lastMediaData.Album != newMediaData.Album ||
+                _lastMediaData.PlaybackStatus != newMediaData.PlaybackStatus ||
+                _lastMediaData.ThumbnailBase64 != newMediaData.ThumbnailBase64)
+            {
+                _lastMediaData = newMediaData;
+                OnMediaChanged?.Invoke(this, newMediaData);
             }
-        });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MediaWatcher] Error processing media properties: {ex.Message}");
+        }
     }
 
     private bool IsValidSessionData(string title)
@@ -186,95 +233,32 @@ public class MediaWatcherService : IDisposable
         return !string.IsNullOrWhiteSpace(title);
     }
 
-    private void NotifySessionChanged()
-    {
-        var dto = CreateSessionDtoFromExistingData();
-        OnSessionChanged?.Invoke(this, dto);
-    }
-
-    private MediaSessionDto? CreateSessionDto(GlobalSystemMediaTransportControlsSessionMediaProperties props, string? thumbnailBase64)
-    {
-        if (_yandexSession == null || _sessionInfo == null)
-            return null;
-
-        var playbackInfo = _yandexSession.ControlSession?.GetPlaybackInfo();
-
-        return new MediaSessionDto
-        {
-            Id = _sessionInfo.Guid,
-            AppId = YANDEX_MUSIC_APP_IDS[0],
-            AppName = "Яндекс Музыка",
-            Title = props.Title ?? string.Empty,
-            Artist = props.Artist ?? string.Empty,
-            Album = props.AlbumTitle ?? string.Empty,
-            PlaybackStatus = playbackInfo?.PlaybackStatus.ToString() ?? "Unknown",
-            ThumbnailBase64 = thumbnailBase64,
-            IsFocused = true,
-            Volume = (int)_currentVolumeInfo.Volume,
-            IsMuted = _currentVolumeInfo.IsMuted
-        };
-    }
-
-    private MediaSessionDto? CreateSessionDtoFromExistingData()
-    {
-        if (_yandexSession == null || _sessionInfo == null)
-            return null;
-
-        var props = _sessionInfo.LastMediaProperties;
-        var playbackStatus = _sessionInfo.LastPlaybackStatus;
-
-        return new MediaSessionDto
-        {
-            Id = _sessionInfo.Guid,
-            AppId = YANDEX_MUSIC_APP_IDS[0],
-            AppName = "Яндекс Музыка",
-            Title = props?.Title ?? string.Empty,
-            Artist = props?.Artist ?? string.Empty,
-            Album = props?.AlbumTitle ?? string.Empty,
-            PlaybackStatus = playbackStatus.ToString(),
-            ThumbnailBase64 = _sessionInfo.LastThumbnailBase64,
-            IsFocused = true,
-            Volume = (int)_currentVolumeInfo.Volume,
-            IsMuted = _currentVolumeInfo.IsMuted
-        };
-    }
-
-    public MediaSessionDto? GetCurrentSession()
-    {
-        var dto = CreateSessionDtoFromExistingData();
-        if (dto != null && IsValidSessionData(dto.Title))
-            return dto;
-        return null;
-    }
-
     public async Task<bool> SendCommandAsync(string command, int? stepPercent = null, int? value = null)
     {
+        if (_yandexSession?.ControlSession == null)
+            return false;
+
         try
         {
             switch (command.ToLowerInvariant())
             {
                 case "play":
-                    if (_yandexSession?.ControlSession == null) return false;
                     await _yandexSession.ControlSession.TryPlayAsync();
                     return true;
                 case "pause":
-                    if (_yandexSession?.ControlSession == null) return false;
                     await _yandexSession.ControlSession.TryPauseAsync();
                     return true;
                 case "playpause":
                 case "toggle":
-                    if (_yandexSession?.ControlSession == null) return false;
                     await _yandexSession.ControlSession.TryTogglePlayPauseAsync();
                     return true;
                 case "next":
                 case "nexttrack":
-                    if (_yandexSession?.ControlSession == null) return false;
                     await _yandexSession.ControlSession.TrySkipNextAsync();
                     return true;
                 case "previous":
                 case "prev":
                 case "prevtrack":
-                    if (_yandexSession?.ControlSession == null) return false;
                     await _yandexSession.ControlSession.TrySkipPreviousAsync();
                     return true;
                 case "volume_up":
