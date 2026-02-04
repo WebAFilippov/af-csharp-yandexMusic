@@ -21,6 +21,9 @@ public class CommandMessage
 
     [JsonPropertyName("value")]
     public int? Value { get; set; }
+
+    [JsonPropertyName("deviceId")]
+    public string? DeviceId { get; set; }
 }
 
 // Media data - track information only
@@ -54,12 +57,34 @@ public class MediaData
     public bool IsFocused { get; set; }
 }
 
-// Volume data - volume and mute status only
-public class VolumeData
+// Audio device information
+public class AudioDevice
 {
-    [JsonPropertyName("volume")]
-    public int Volume { get; set; }
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("isDefault")]
+    public bool IsDefault { get; set; }
 
     [JsonPropertyName("isMuted")]
     public bool IsMuted { get; set; }
+
+    [JsonPropertyName("volume")]
+    public int Volume { get; set; }
+}
+
+// Error data with structured information
+public class ErrorData
+{
+    [JsonPropertyName("code")]
+    public string Code { get; set; } = string.Empty;
+
+    [JsonPropertyName("message")]
+    public string Message { get; set; } = string.Empty;
+
+    [JsonPropertyName("details")]
+    public object? Details { get; set; }
 }

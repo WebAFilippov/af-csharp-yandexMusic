@@ -7,15 +7,17 @@ namespace MediaControllerService.Services;
 public class StdioCommunicationService : IDisposable
 {
     private readonly MediaWatcherService _mediaWatcher;
+    private readonly AudioService _audioService;
     private readonly CancellationTokenSource _cancellationTokenSource;
     private Task? _readTask;
 
     public event EventHandler? OnClientDisconnected;
     public event EventHandler<string>? OnCloseRequested;
 
-    public StdioCommunicationService(MediaWatcherService mediaWatcher)
+    public StdioCommunicationService(MediaWatcherService mediaWatcher, AudioService audioService)
     {
         _mediaWatcher = mediaWatcher;
+        _audioService = audioService;
         _cancellationTokenSource = new CancellationTokenSource();
     }
 
@@ -23,11 +25,17 @@ public class StdioCommunicationService : IDisposable
     {
         Console.WriteLine("[Stdio] Communication service started");
         
+        // Media events from Yandex Music
         _mediaWatcher.OnMediaChanged += MediaWatcher_OnMediaChanged;
-        _mediaWatcher.OnVolumeChanged += MediaWatcher_OnVolumeChanged;
         _mediaWatcher.OnSessionClosed += MediaWatcher_OnSessionClosed;
-
-        // Initial media data will be sent via OnMediaChanged event when session is detected
+        
+        // Volume events from Windows Audio (independent of Yandex Music)
+        _audioService.OnVolumeChanged += AudioService_OnVolumeChanged;
+        _audioService.OnError += AudioService_OnError;
+        
+        // Send initial volume data immediately (list of all devices)
+        var devices = _audioService.GetAllDevices();
+        SendMessage(new Message { Type = "volume", Data = devices });
 
         // Start reading from stdin
         _readTask = Task.Run(ReadStdinAsync);
@@ -45,7 +53,6 @@ public class StdioCommunicationService : IDisposable
                 
                 if (line == null)
                 {
-                    // EOF - parent process closed stdin
                     Console.WriteLine("[Stdio] stdin closed, shutting down...");
                     OnClientDisconnected?.Invoke(this, EventArgs.Empty);
                     break;
@@ -64,6 +71,11 @@ public class StdioCommunicationService : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"[Stdio] Error reading from stdin: {ex.Message}");
+            SendError(new ErrorData
+            {
+                Code = "STDIN_READ_ERROR",
+                Message = $"Failed to read from stdin: {ex.Message}"
+            });
             OnClientDisconnected?.Invoke(this, EventArgs.Empty);
         }
     }
@@ -75,7 +87,14 @@ public class StdioCommunicationService : IDisposable
             var command = JsonSerializer.Deserialize<CommandMessage>(message);
 
             if (command == null)
+            {
+                SendError(new ErrorData
+                {
+                    Code = "INVALID_COMMAND",
+                    Message = "Failed to deserialize command message"
+                });
                 return;
+            }
 
             if (command.Command.ToLowerInvariant() == "close")
             {
@@ -83,18 +102,74 @@ public class StdioCommunicationService : IDisposable
                 return;
             }
 
-            // For Yandex Music, we ignore sessionId and always control the active session
-            var success = await _mediaWatcher.SendCommandAsync(command.Command, command.StepPercent, command.Value);
-
-            if (!success)
+            var commandLower = command.Command.ToLowerInvariant();
+            
+            switch (commandLower)
             {
-                await SendErrorAsync();
+                case "volume_up":
+                    _audioService.VolumeUp(command.StepPercent ?? 3, command.DeviceId);
+                    break;
+                case "volume_down":
+                    _audioService.VolumeDown(command.StepPercent ?? 3, command.DeviceId);
+                    break;
+                case "set_volume":
+                case "setvolume":
+                    if (command.Value.HasValue)
+                    {
+                        _audioService.SetVolume(command.Value.Value, command.DeviceId);
+                        Console.WriteLine($"[Stdio] Volume set to {command.Value.Value}% on device '{command.DeviceId ?? "default"}'");
+                    }
+                    else
+                    {
+                        SendError(new ErrorData
+                        {
+                            Code = "MISSING_VALUE",
+                            Message = "set_volume command requires 'value' parameter",
+                            Details = new { Command = command.Command }
+                        });
+                    }
+                    break;
+                case "toggle_mute":
+                    _audioService.ToggleMute(command.DeviceId);
+                    break;
+                case "mute":
+                    _audioService.SetMute(true, command.DeviceId);
+                    break;
+                case "unmute":
+                    _audioService.SetMute(false, command.DeviceId);
+                    break;
+                default:
+                    // Media commands - route to Yandex Music
+                    var success = await _mediaWatcher.SendCommandAsync(command.Command, command.StepPercent, command.Value);
+                    if (!success)
+                    {
+                        SendError(new ErrorData
+                        {
+                            Code = "MEDIA_COMMAND_FAILED",
+                            Message = $"Media command '{command.Command}' failed",
+                            Details = new { Command = command.Command }
+                        });
+                    }
+                    break;
             }
+        }
+        catch (JsonException ex)
+        {
+            Console.WriteLine($"[Stdio] JSON parsing error: {ex.Message}");
+            SendError(new ErrorData
+            {
+                Code = "JSON_PARSE_ERROR",
+                Message = $"Failed to parse JSON message: {ex.Message}"
+            });
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[Stdio] Error processing message: {ex.Message}");
-            await SendErrorAsync();
+            SendError(new ErrorData
+            {
+                Code = "PROCESSING_ERROR",
+                Message = $"Error processing command: {ex.Message}"
+            });
         }
     }
 
@@ -103,9 +178,14 @@ public class StdioCommunicationService : IDisposable
         SendMessage(new Message { Type = "media", Data = mediaData });
     }
 
-    private void MediaWatcher_OnVolumeChanged(object? sender, VolumeData volumeData)
+    private void AudioService_OnVolumeChanged(object? sender, List<AudioDevice> devices)
     {
-        SendMessage(new Message { Type = "volume", Data = volumeData });
+        SendMessage(new Message { Type = "volume", Data = devices });
+    }
+
+    private void AudioService_OnError(object? sender, ErrorData error)
+    {
+        SendError(error);
     }
 
     private void MediaWatcher_OnSessionClosed(object? sender, EventArgs e)
@@ -126,10 +206,9 @@ public class StdioCommunicationService : IDisposable
         }
     }
 
-    private Task SendErrorAsync()
+    private void SendError(ErrorData error)
     {
-        SendMessage(new Message { Type = "media", Data = null });
-        return Task.CompletedTask;
+        SendMessage(new Message { Type = "error", Data = error });
     }
 
     public void Dispose()

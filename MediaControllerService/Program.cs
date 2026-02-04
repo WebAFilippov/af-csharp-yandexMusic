@@ -97,8 +97,8 @@ class Program
 
             _thumbnailService = new ThumbnailService(config.Thumbnail);
             _audioService = new AudioService();
-            _mediaWatcher = new MediaWatcherService(_thumbnailService, _audioService);
-            _stdioService = new StdioCommunicationService(_mediaWatcher);
+            _mediaWatcher = new MediaWatcherService(_thumbnailService);
+            _stdioService = new StdioCommunicationService(_mediaWatcher, _audioService);
 
             _stdioService.OnCloseRequested += (sender, command) =>
             {

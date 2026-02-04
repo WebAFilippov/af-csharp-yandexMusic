@@ -14,40 +14,17 @@ public class MediaWatcherService : IDisposable
     private MediaSessionInfo? _sessionInfo;
     private string? _thumbnailCache;
     private readonly object _sessionLock = new object();
-    private readonly AudioService _audioService;
     
     // Track previous values for change detection
     private MediaData? _lastMediaData;
-    private VolumeData? _lastVolumeData;
 
     // New events - separated by type
     public event EventHandler<MediaData?>? OnMediaChanged;
-    public event EventHandler<VolumeData>? OnVolumeChanged;
     public event EventHandler? OnSessionClosed;
 
-    public MediaWatcherService(ThumbnailService thumbnailService, AudioService audioService)
+    public MediaWatcherService(ThumbnailService thumbnailService)
     {
         _thumbnailService = thumbnailService;
-        _audioService = audioService;
-
-        // Listen to system volume changes from AudioService
-        _audioService.OnVolumeChanged += (sender, info) =>
-        {
-            var newVolumeData = new VolumeData
-            {
-                Volume = (int)info.Volume,
-                IsMuted = info.IsMuted
-            };
-
-            // Check if volume actually changed
-            if (_lastVolumeData == null || 
-                _lastVolumeData.Volume != newVolumeData.Volume || 
-                _lastVolumeData.IsMuted != newVolumeData.IsMuted)
-            {
-                _lastVolumeData = newVolumeData;
-                OnVolumeChanged?.Invoke(this, newVolumeData);
-            }
-        };
     }
 
     public void Start()
@@ -80,16 +57,6 @@ public class MediaWatcherService : IDisposable
     {
         try
         {
-            // Send current volume
-            var (volume, isMuted) = _audioService.GetVolumeInfo();
-            var volumeData = new VolumeData
-            {
-                Volume = (int)volume,
-                IsMuted = isMuted
-            };
-            _lastVolumeData = volumeData;
-            OnVolumeChanged?.Invoke(this, volumeData);
-
             // Try to get current media properties
             if (_yandexSession?.ControlSession != null)
             {
@@ -345,23 +312,6 @@ public class MediaWatcherService : IDisposable
                 case "prev":
                 case "prevtrack":
                     await _yandexSession.ControlSession.TrySkipPreviousAsync();
-                    return true;
-                case "volume_up":
-                    _audioService.VolumeUp(stepPercent ?? 3);
-                    return true;
-                case "volume_down":
-                    _audioService.VolumeDown(stepPercent ?? 3);
-                    return true;
-                case "set_volume":
-                case "setvolume":
-                    if (value.HasValue)
-                    {
-                        _audioService.SetVolume(value.Value);
-                        Console.WriteLine($"[MediaWatcher] Volume set to {value.Value}%");
-                    }
-                    return true;
-                case "toggle_mute":
-                    _audioService.ToggleMute();
                     return true;
                 default:
                     Console.WriteLine($"[MediaWatcher] Unknown command: {command}");
