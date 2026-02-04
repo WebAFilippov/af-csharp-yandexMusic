@@ -1,6 +1,9 @@
 using System.Runtime.InteropServices;
 using MediaControllerService.Models;
 
+// Ensure COM visibility for callback interfaces
+[assembly: ComVisible(false)]
+
 namespace MediaControllerService.Services;
 
 public class AudioService : IDisposable
@@ -32,15 +35,15 @@ public class AudioService : IDisposable
         {
             _enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
             
-            // Register for device notifications
-            _notificationClient = new NotificationClient(this);
-            _enumerator.RegisterEndpointNotificationCallback(_notificationClient);
-            
             // Initial device enumeration
             RefreshDevicesList();
             
             // Start monitoring volume changes
             _monitorTask = Task.Run(MonitorVolumeChangesAsync);
+            
+            // Note: Device notifications disabled due to COM interop issues
+            // Using polling instead to detect device changes
+            _notificationClient = null;
             
             Console.WriteLine($"[AudioService] Initialized with {_devices.Count} devices");
         }
@@ -227,11 +230,25 @@ public class AudioService : IDisposable
 
     private async Task MonitorVolumeChangesAsync()
     {
+        int deviceCheckCounter = 0;
+        
         while (!_cts.Token.IsCancellationRequested)
         {
             try
             {
                 bool hasChanges = false;
+
+                // Check for device changes every 5 seconds if notifications aren't available
+                if (_notificationClient == null && ++deviceCheckCounter >= 25)
+                {
+                    deviceCheckCounter = 0;
+                    var previousDeviceCount = _devices.Count;
+                    RefreshDevicesList();
+                    if (_devices.Count != previousDeviceCount)
+                    {
+                        hasChanges = true;
+                    }
+                }
 
                 lock (_devicesLock)
                 {
@@ -394,17 +411,23 @@ public class AudioService : IDisposable
     public void Dispose()
     {
         _cts.Cancel();
-        _monitorTask?.Wait(TimeSpan.FromSeconds(1));
+        try
+        {
+            _monitorTask?.Wait(TimeSpan.FromSeconds(1));
+        }
+        catch (AggregateException) { }
+        catch (OperationCanceledException) { }
         _cts.Dispose();
 
-        if (_enumerator != null && _notificationClient != null)
-        {
-            try
-            {
-                _enumerator.UnregisterEndpointNotificationCallback(_notificationClient);
-            }
-            catch { }
-        }
+        // Note: Device notifications disabled due to COM interop issues
+        // if (_enumerator != null && _notificationClient != null)
+        // {
+        //     try
+        //     {
+        //         _enumerator.UnregisterEndpointNotificationCallback(_notificationClient);
+        //     }
+        //     catch { }
+        // }
 
         lock (_devicesLock)
         {
@@ -456,6 +479,8 @@ public class AudioService : IDisposable
         }
     }
 
+    [ComVisible(true)]
+    [ClassInterface(ClassInterfaceType.None)]
     private class NotificationClient : IMMNotificationClient
     {
         private readonly AudioService _service;
@@ -467,25 +492,53 @@ public class AudioService : IDisposable
 
         public int OnDeviceStateChanged([MarshalAs(UnmanagedType.LPWStr)] string pwstrDeviceId, uint dwNewState)
         {
-            _service.OnDeviceStateChanged(pwstrDeviceId, dwNewState);
+            try
+            {
+                _service.OnDeviceStateChanged(pwstrDeviceId, dwNewState);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[NotificationClient] Error in OnDeviceStateChanged: {ex.Message}");
+            }
             return 0; // S_OK
         }
 
         public int OnDeviceAdded([MarshalAs(UnmanagedType.LPWStr)] string pwstrDeviceId)
         {
-            _service.OnDeviceAdded(pwstrDeviceId);
+            try
+            {
+                _service.OnDeviceAdded(pwstrDeviceId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[NotificationClient] Error in OnDeviceAdded: {ex.Message}");
+            }
             return 0; // S_OK
         }
 
         public int OnDeviceRemoved([MarshalAs(UnmanagedType.LPWStr)] string pwstrDeviceId)
         {
-            _service.OnDeviceRemoved(pwstrDeviceId);
+            try
+            {
+                _service.OnDeviceRemoved(pwstrDeviceId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[NotificationClient] Error in OnDeviceRemoved: {ex.Message}");
+            }
             return 0; // S_OK
         }
 
         public int OnDefaultDeviceChanged(EDataFlow flow, ERole role, [MarshalAs(UnmanagedType.LPWStr)] string pwstrDefaultDeviceId)
         {
-            _service.OnDefaultDeviceChanged((int)flow, (int)role, pwstrDefaultDeviceId);
+            try
+            {
+                _service.OnDefaultDeviceChanged((int)flow, (int)role, pwstrDefaultDeviceId);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[NotificationClient] Error in OnDefaultDeviceChanged: {ex.Message}");
+            }
             return 0; // S_OK
         }
 
